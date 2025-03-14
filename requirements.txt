@@ -6,3 +6,4 @@ fastapi
 pymupdf
 dotenv
 pydantic-settings
+magic
