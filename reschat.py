@@ -5,6 +5,8 @@ from groq import Groq
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from dotenv import load_dotenv
+import re
+import json
 
 # Load environment variables
 load_dotenv()
@@ -61,11 +63,17 @@ async def upload_resumes(files: List[UploadFile] = File(...)):
     return {"message": "Resumes uploaded successfully", "resumes": extracted_resumes}
 
 @app.post("/compare_resumes/")
-async def compare_resumes(query: str = Form(...), resume_texts: List[str] = Form(...)):
+async def compare_resumes(query: str = Form(...), resume_texts: str = Form(...), rank_by: str = Form(...)):
+    try:
+        # Parse the resume_texts from JSON string to a list
+        resume_texts = json.loads(resume_texts)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid format for resume_texts. Expected a JSON array.")
+
     if len(resume_texts) < 2:
         return {"response": "Please upload at least two resumes for comparison."}
     
-    # Step 1: Create a structured template for each resume to minimize tokens
+    # Rest of the comparison logic remains the same
     resume_data = []
     
     for i, resume_text in enumerate(resume_texts):
@@ -73,7 +81,7 @@ async def compare_resumes(query: str = Form(...), resume_texts: List[str] = Form
         name_line = resume_text.split('\n')[0] if '\n' in resume_text else "Unknown"
         candidate_name = name_line[:30]  # Limit name length
         
-        # Extremely minimal approach - just count occurrences of keywords
+        # Extract skills, experience, and projects based on rank_by parameter
         skills_count = {}
         common_skills = ["python", "java", "javascript", "react", "angular", "node", 
                         "sql", "nosql", "aws", "azure", "docker", "kubernetes", 
@@ -101,7 +109,7 @@ async def compare_resumes(query: str = Form(...), resume_texts: List[str] = Form
         # Count projects (very simplified)
         project_count = resume_text.lower().count("project") 
         
-        # Create a minimal data structure
+        # Create a data structure based on rank_by parameter
         resume_data.append({
             "id": i+1,
             "name": candidate_name,
@@ -110,12 +118,17 @@ async def compare_resumes(query: str = Form(...), resume_texts: List[str] = Form
             "project_count": project_count
         })
     
-    # Step 2: Convert to a minimal string representation
+    # Step 2: Convert to a minimal string representation based on rank_by parameter
     structured_data = "RESUME COMPARISON DATA:\n"
     for r in resume_data:
         structured_data += f"Resume #{r['id']} - {r['name']}\n"
-        structured_data += f"Skills: {', '.join([f'{s}({c})' for s,c in r['skills'].items()])}\n"
-        structured_data += f"Experience: ~{r['exp_years']} years, Projects: ~{r['project_count']}\n\n"
+        if rank_by == "all" or rank_by == "skills":
+            structured_data += f"Skills: {', '.join([f'{s}({c})' for s,c in r['skills'].items()])}\n"
+        if rank_by == "all" or rank_by == "experience":
+            structured_data += f"Experience: ~{r['exp_years']} years\n"
+        if rank_by == "all" or rank_by == "projects":
+            structured_data += f"Projects: ~{r['project_count']}\n"
+        structured_data += "\n"
     
     # Step 3: Use a simpler model with the structured data and query
     try:
@@ -131,6 +144,23 @@ async def compare_resumes(query: str = Form(...), resume_texts: List[str] = Form
         return {"response": response.choices[0].message.content}
     except Exception as e:
         return {"response": f"Error comparing resumes: {str(e)}"}
+
+@app.post("/extract_contact_details/")
+async def extract_contact_details(resume_texts: List[str] = Form(...)):
+    contact_details = []
+    
+    for resume_text in resume_texts:
+        # Extract email addresses
+        emails = re.findall(r'[\w\.-]+@[\w\.-]+', resume_text)
+        # Extract phone numbers (simple pattern)
+        phones = re.findall(r'\+?\d[\d -]{8,12}\d', resume_text)
+        
+        contact_details.append({
+            "emails": emails,
+            "phones": phones
+        })
+    
+    return {"contact_details": contact_details}
 
 @app.post("/chat/")
 async def chat_with_resume(query: str = Form(...), resume_texts: List[str] = Form(...)):
@@ -205,5 +235,3 @@ async def chat_with_resume(query: str = Form(...), resume_texts: List[str] = For
                 responses.append({"resume_index": i + 1, "response": f"Error processing this resume: {str(e)}"})
         
         return {"responses": responses}
-    
-    
